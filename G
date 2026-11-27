@@ -1,0 +1,225 @@
+package com.example.agentapp
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Path
+import android.os.Handler
+import android.os.Looper
+import android.view.accessibility.AccessibilityEvent
+
+class GameTapService : AccessibilityService() {
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var isRunning = false
+    private var completedGames = 0
+    private var targetGames = 100_000
+    private var shotStep = 0
+
+    // اپنا اصل گیم پیکج نیم یہاں لکھیں
+    private val targetPackageName = "com.example.bubbleshooter"
+
+    // MediaProjection سے آنے والا تازہ اسکرین فریم (اگر دستیاب ہو)
+    var latestScreenBitmap: Bitmap? = null
+
+    private val shooterX = 540f
+    private val shooterY = 1720f
+
+    // اوپر ببلز چیک کرنے اور نشانہ لگانے کے پوائنٹس (اپنی اسکرین کے مطابق سیٹ کریں)
+    private val aimTargets = listOf(
+        Pair(260f, 620f),
+        Pair(420f, 580f),
+        Pair(540f, 560f),
+        Pair(680f, 580f),
+        Pair(820f, 620f)
+    )
+
+    private val adCloseCandidates = listOf(
+        Pair(980f, 140f),
+        Pair(900f, 160f),
+        Pair(80f, 140f),
+        Pair(960f, 240f)
+    )
+
+    private val retryGameCandidates = listOf(
+        Pair(540f, 1380f),
+        Pair(540f, 1220f),
+        Pair(540f, 1520f)
+    )
+
+    private val adWaitMs = 32_000L
+    private val shotDelayMs = 1_100L
+
+    companion object {
+        var instance: GameTapService? = null
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+
+    override fun onInterrupt() {
+        stopAutomation()
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        stopAutomation()
+        instance = null
+        return super.onUnbind(intent)
+    }
+
+    fun launchGame(packageName: String = targetPackageName): Boolean {
+        val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+        return true
+    }
+
+    private fun detectColor(bitmap: Bitmap, x: Int, y: Int): String {
+        if (x !in 0 until bitmap.width || y !in 0 until bitmap.height) return "unknown"
+        val p = bitmap.getPixel(x, y)
+        val r = Color.red(p)
+        val g = Color.green(p)
+        val b = Color.blue(p)
+        return when {
+            b > r + 45 && b > g + 25 -> "blue"
+            g > r + 35 && g > b + 20 -> "green"
+            r > g + 45 && r > b + 45 -> "red"
+            r > 180 && g > 180 && b < 90 -> "yellow"
+            else -> "other"
+        }
+    }
+
+    /**
+     * اگر اسکرین بٹ میپ موجود ہو تو شوٹر کے رنگ سے ملتا جلتا ٹارگٹ ڈھونڈتا ہے،
+     * ورنہ باری باری اگلا ٹارگٹ دیتا ہے۔
+     */
+    private fun pickTargetPoint(): Pair<Float, Float> {
+        val frame = latestScreenBitmap
+        if (frame != null) {
+            val shooterColor = detectColor(frame, shooterX.toInt(), shooterY.toInt())
+            if (shooterColor != "unknown" && shooterColor != "other") {
+                val matched = aimTargets.firstOrNull { pt ->
+                    detectColor(frame, pt.first.toInt(), pt.second.toInt()) == shooterColor
+                }
+                if (matched != null) return matched
+            }
+        }
+        val fallback = aimTargets[shotStep % aimTargets.size]
+        shotStep++
+        return fallback
+    }
+
+    fun tapAt(x: Float, y: Float, durationMs: Long = 70L) {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
+
+    fun aimAndShoot(targetX: Float, targetY: Float, durationMs: Long = 180L) {
+        val path = Path().apply {
+            moveTo(shooterX, shooterY)
+            lineTo(targetX, targetY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
+
+    fun watchAdAndClose(onUpdate: (String) -> Unit, allowStandalone: Boolean = true) {
+        if (!isRunning && !allowStandalone) return
+        val wasLoopRunning = isRunning
+        onUpdate("ایڈ چل رہا ہے، مکمل ہونے کا انتظار...")
+
+        handler.postDelayed({
+            if (!isRunning && !wasLoopRunning && !allowStandalone) return@postDelayed
+            onUpdate("ایڈ مکمل، کلوز پوزیشنز چیک کر رہا ہوں...")
+
+            adCloseCandidates.forEachIndexed { index, pt ->
+                handler.postDelayed({
+                    tapAt(pt.first, pt.second, 90L)
+                    onUpdate("کلوز ٹیپ ${index + 1}/${adCloseCandidates.size} at (${pt.first.toInt()}, ${pt.second.toInt()})")
+                }, index * 700L)
+            }
+        }, adWaitMs)
+    }
+
+    fun startNewGame(onUpdate: (String) -> Unit, onVoice: ((String) -> Unit)? = null) {
+        onUpdate("نیا گیم شروع کر رہا ہوں...")
+        onVoice?.invoke("نیا گیم شروع کر رہا ہوں۔")
+
+        retryGameCandidates.forEachIndexed { index, pt ->
+            handler.postDelayed({
+                tapAt(pt.first, pt.second, 90L)
+                onUpdate("نیا گیم ٹیپ ${index + 1}/${retryGameCandidates.size} at (${pt.first.toInt()}, ${pt.second.toInt()})")
+            }, index * 650L)
+        }
+    }
+
+    /**
+     * پہلے گیم کھولتا ہے، پھر 1 لاکھ ٹارگٹ کے ساتھ کھیلنا شروع کر دیتا ہے۔
+     */
+    fun openAndStartPlaying(
+        packageName: String = targetPackageName,
+        targetCount: Int = 100_000,
+        onUpdate: (String) -> Unit,
+        onMilestoneVoice: (String) -> Unit
+    ) {
+        stopAutomation()
+        targetGames = targetCount
+        completedGames = 0
+        shotStep = 0
+        isRunning = true
+
+        val opened = launchGame(packageName)
+        if (opened) {
+            onMilestoneVoice("گیم کھول رہا ہوں اور کھیلنا شروع کر رہا ہوں۔")
+            onUpdate("گیم کھل رہا ہے، 2.5 سیکنڈ میں شوٹنگ شروع ہوگی...")
+        } else {
+            onMilestoneVoice("گیم نہیں ملا، موجودہ اسکرین پر کھیلنا شروع کر رہا ہوں۔")
+            onUpdate("پیکج نہیں ملا، اسی اسکرین پر لوپ شروع ہو رہا ہے...")
+        }
+
+        val startDelay = if (opened) 2_500L else 500L
+
+        val gameRunnable = object : Runnable {
+            override fun run() {
+                if (!isRunning) return
+
+                if (completedGames >= targetGames) {
+                    isRunning = false
+                    val doneMsg = "1 لاکھ ٹارگٹ مکمل ہو گیا!"
+                    onUpdate(doneMsg)
+                    onMilestoneVoice(doneMsg)
+                    return
+                }
+
+                completedGames++
+                val target = pickTargetPoint()
+                aimAndShoot(target.first, target.second)
+                onUpdate("راؤنڈ: $completedGames / $targetGames | نشانہ: (${target.first.toInt()}, ${target.second.toInt()})")
+
+                if (completedGames % 50 == 0) {
+                    onMilestoneVoice("$completedGames مکمل ہو گئے ہیں۔")
+                }
+
+                handler.postDelayed(this, shotDelayMs)
+            }
+        }
+
+        handler.postDelayed(gameRunnable, startDelay)
+    }
+
+    fun stopAutomation() {
+        isRunning = false
+        handler.removeCallbacksAndMessages(null)
+    }
+}
