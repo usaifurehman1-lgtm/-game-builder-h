@@ -10,7 +10,7 @@ cat << 'EOF' > MainActivity.ktcat << 'EOF' > app/src/main/AndroidManifest.xml
         android:allowBackup="true"
         android:label="Agent App"
         android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
-
+        
         <activity
             android:name=".MainActivity"
             android:exported="true">
