@@ -1,1 +1,22 @@
-plugins { id("com.android.application") } android { namespace = "com.example.agentapp" compileSdk = 34 defaultConfig { applicationId = "com.example.agentapp" minSdk = 24 targetSdk = 34 } }.
+plugins {
+    id("com.android.application") version "8.13.0"
+}
+
+android {
+    namespace = "com.example.agentapp"
+
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.example.agentapp"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
