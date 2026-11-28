@@ -1,6 +1,21 @@
-pluginManagement { repositories
-{ google() mavenCentral() 
-gradlePluginPortal() } 
-} dependencyResolutionManagement 
-{ repositories { google() mavenCentral() } 
-} include ':app'
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "GameBuilder"
+
+include(":app")
